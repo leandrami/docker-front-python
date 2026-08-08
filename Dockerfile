@@ -1,11 +1,11 @@
 #definindo a primeira imagem (com NODE) baixando o sistema operacional linux, ja com o node 20 instalado
-FROM node:20.18-alpine AS build
+FROM node:22-alpine AS build
 
 #cria uma pasta e entra na mesma para que o sistema fique organizado, pois as prox instruções acontecerão nela
 WORKDIR /app
 
 #copia para dentro da pasta /app as bibliotecas do node q o projeto precisará
-COPY package.json ./ 
+COPY package*.json ./ 
 
 #instala na pasta as bibliotecas q foram copiadas anteriormente
 RUN npm install
