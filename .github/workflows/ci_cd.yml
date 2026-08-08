@@ -1,0 +1,61 @@
+name: CI/CD Pipeline
+
+on:            # Define o gatilho da pipeline
+  push:
+    branches:
+      - main   # gatilho que dispara a pipeline sempre que houver um PUSH direto na branch MAIN
+
+jobs:     
+  ci:          # identificador interno do job Cria uma Máquina Virtual #1 (Ubuntu novo)
+    name: Continuous Integration & Validation
+    runs-on: ubuntu-latest   # define q rodará na Máquina Virtual Linux
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4    # executa um comando para clonar o repositório inteiro pra dentro da máquina virtual
+
+      - name: Setup Node Runtime
+        uses: actions/setup-node@v4  #instala e configura o Node.js na máquina virtual
+        with:
+          node-version: '20'     # checa se a versão instalada bate com a mesma versão usada no dockerfile
+
+      - name: Install Dependencies
+        run: npm install        # lê o package.json e instala o nodejs 
+
+      - name: Run Lint
+        run: npm run lint  # roda o lint na pipeline, garante que erros de estilo/qualidade de código (como variável não usada, import quebrado, etc.), sejam capturados a cada PUSH, e para a pipeline. 
+
+      - name: Validate Build
+        run: npm run build   # executa o Vite, compilando o jsx, resolve os imports, otimiza os assets e gra a pasta /dist dentro da MV, com o fim de saber se o projeto está preparado para o deploy, 'buildável'.
+
+  cd:    # Cria uma MV #2 (Ubuntu novo, vazio, TOTALMENTE DIFERENTE da #1)
+    name: Continuous Delivery & Registry Push
+    needs: [ci]
+    # só roda depois que ci passar com sucesso (nem falhou || nem foi cancelado).
+    if: ${{ always() && contains(needs.*.result, 'success') && !(contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}  
+    runs-on: ubuntu-latest  # define que roda numa MV com Ubuntu Linux (versão mais recente disponibilizada pelo GitHub)
+    
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4  # clona o código de novo numa MV nova e diferente da anterior #1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3  # instala e configura o Buildx (motor/plugin/ferramenta avançada de build do Docker, com suporte a cache e multi-plataforma), necessário para o próximo passo (build-push-action) funcionar
+
+      - name: Authenticate to Container Registry
+        uses: docker/login-action@v3   # usa uma "action" pronta (criada pelo Docker), que sabe fazer login em registries (Docker Hub, GHCR, etc.) e que precisará dos tokens do login e da senha.
+        with:
+          username: ${{ secrets.LOGIN_FRONT_PYTHON }}
+          password: ${{ secrets.SENHA_FRONT_PYTHON }}
+
+      - name: Build and Push to Docker Hub
+        uses: docker/build-push-action@v5   # action do próprio Docker que builda a imagem usando o Buildx configurado antes, e já publica ela no registry( que é repositório de imagens Docker)
+        with:
+          context: .    # define onde estão o Dockerfile(COPY) e os arquivos a copiar q serão todos do repositório (.)
+          push: true   # diz pra action buildar e também ENVIAR (publicar) a imagem pro Docker Hub automaticamente; se fosse "false", só buildaria localmente na MV, sem publicar no hub
+          tags: |     # lista de "nomes/etiquetas" que a imagem final vai receber (versão mais recente / número sequencial de execuções dessa pipeline  /  hash do commit que gerou essa imagem)
+            ${{ secrets.LOGIN_FRONT_PYTHON }}/front-node:latest   
+            ${{ secrets.LOGIN_FRONT_PYTHON }}/front-node:0.1.${{ github.run_number }}
+            ${{ secrets.LOGIN_FRONT_PYTHON }}/front-node:${{ github.sha }}
+          cache-from: type=gha     # comando p essa action BUSCAR cache de builds anteriores guardado no GitHub Actions (gha = GitHub Actions cache), acelerando o processo se camadas não mudaram
+          cache-to: type=gha,mode=max       # comando diz pra SALVAR o cache desse build atual de volta no GitHub Actions, pra ser reaproveitado na próxima execução; o "mode=max" guarda o máximo de camadas possível (cache mais completo, builds futuros mais rápidos)
